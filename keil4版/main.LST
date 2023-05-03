@@ -1,0 +1,338 @@
+C51 COMPILER V9.05   MAIN                                                                  05/02/2023 13:05:49 PAGE 1   
+
+
+C51 COMPILER V9.05, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN main.OBJ
+COMPILER INVOKED BY: E:\keil4\C51\BIN\C51.EXE main.c BROWSE DEBUG OBJECTEXTEND TABS(2)
+
+line level    source
+
+   1          #include <reg51.H> 
+   2          #include "intrins.h"
+   3          #include "ds1302.h"  //添加DS1302头文件
+   4          #define uint unsigned int
+   5          #define uchar unsigned char
+   6          #define ulong unsigned long
+   7          #define     LCDIO      P0  //液晶屏数据口
+   8          //ADC0832的引脚
+   9          bit flag_300ms ;
+  10          sbit ADCLK =P1^1;  //ADC0832 clock signal
+  11          sbit ADDIO =P1^3;  //ADC0832 k in
+  12          sbit ADCS =P1^4;   //ADC0832 chip seclect
+  13          
+  14          sbit rs=P1^0;    //定义1602 RS
+  15          sbit lcden=P1^2; //定义1602 EN
+  16          sbit key1=P3^0;  //设定
+  17          sbit key2=P3^1;  //加
+  18          sbit key3=P3^2;  //减
+  19          sbit motor=P3^7; //继电器接口
+  20          sbit speak=P1^5; //蜂鸣器接口
+  21          uchar key;       //设定指针
+  22          uint RH=400,RL=200;//水位上下限
+  23          float temp_f;
+  24          ulong temp;
+  25          uchar v;
+  26          uchar count,s1num;
+  27          uchar code table[]= "          :          ";
+  28          uchar code table1[]="RH:  %              ";
+  29          uchar getdata; //获取ADC转换回来的值
+  30          
+  31          /*************定时器0初始化程序***************/
+  32          void time_init()    
+  33          {
+  34   1        EA   = 1;     //开总中断
+  35   1        TMOD = 0X01;  //定时器0、定时器1工作方式1
+  36   1        ET0  = 1;     //开定时器0中断 
+  37   1        TR0  = 1;     //允许定时器0定时
+  38   1      }
+  39          /*********************************************/
+  40          void delay(uint z)      //延时
+  41          {
+  42   1        uint x,y;
+  43   1        for(x=z;x>0;x--)
+  44   1          for(y=110;y>0;y--);
+  45   1      }
+  46          /**********************************************/
+  47          void write_com(uchar com)
+  48          {
+  49   1        rs=0;
+  50   1      //rd=0;
+  51   1        lcden=0;
+  52   1        P0=com;
+  53   1        delay(5);
+  54   1        lcden=1;
+  55   1        delay(5);
+C51 COMPILER V9.05   MAIN                                                                  05/02/2023 13:05:49 PAGE 2   
+
+  56   1        lcden=0;  
+  57   1      }
+  58          /*********************************************/
+  59          void write_date(uchar date)
+  60          {
+  61   1        rs=1;
+  62   1      //rd=0;
+  63   1        lcden=0;
+  64   1        P0=date;
+  65   1        delay(5);
+  66   1        lcden=1;
+  67   1        delay(5);
+  68   1        lcden=0;  
+  69   1      }
+  70          
+  71          void lcdinit()
+  72          {
+  73   1        lcden=0;
+  74   1        write_com(0x38);
+  75   1        write_com(0x0c);
+  76   1        write_com(0x06);
+  77   1        write_com(0x01);
+  78   1      }
+  79          /***********************************************/
+  80          void init()
+  81          {
+  82   1        uchar num;
+  83   1        
+  84   1        for(num=0;num<15;num++)
+  85   1          {
+  86   2            write_date(table[num]);
+  87   2            delay(5);
+  88   2          }
+  89   1        write_com(0x80+0x40);
+  90   1        for(num=0;num<15;num++)
+  91   1          {
+  92   2            write_date(table1[num]);
+  93   2            delay(5);
+  94   2          }
+  95   1        }
+  96          /****************************************************************************
+  97          函数功能:AD转换子程序
+  98          ****************************************************************************/
+  99          uchar Adc0832()     //AD转换，返回结果
+ 100          {
+ 101   1          uchar i;
+ 102   1          uchar dat=0;
+ 103   1      
+ 104   1          ADCLK=0;
+ 105   1          ADDIO=1;
+ 106   1          ADCS=0;                  //拉低CS端
+ 107   1          ADCLK=1;                 
+ 108   1          ADCLK=0;                 //拉低CLK端,形成下降沿1
+ 109   1      
+ 110   1          ADDIO=1;//指定转换通道是CH1还是CH2，指定值位与0x1，取最后一位的值
+ 111   1          ADCLK=1;    
+ 112   1          ADCLK=0;                 //拉低CLK端,形成下降沿2
+ 113   1      
+ 114   1          ADDIO=0;//指定值右移一位，再取最后一位的值
+ 115   1          ADCLK=1;
+ 116   1          ADCLK=0;                //拉低CLK端,形成下降沿3
+ 117   1      
+C51 COMPILER V9.05   MAIN                                                                  05/02/2023 13:05:49 PAGE 3   
+
+ 118   1          ADDIO=1;                
+ 119   1          for(i=0;i<8;i++)
+ 120   1          {
+ 121   2              ADCLK=1;
+ 122   2              ADCLK=0;           //形成一次时钟脉冲
+ 123   2              if(ADDIO) 
+ 124   2              dat|= 0x80>>i;  //收数据
+ 125   2          }
+ 126   1          ADCS=1;                //拉低CS端
+ 127   1          ADCLK=1;
+ 128   1          ADDIO=1;               //拉高数据端,回到初始状态
+ 129   1          return(dat);           //return dat
+ 130   1      }
+ 131          /***************************************************************************/
+ 132          
+ 133          /********************************************************/
+ 134          void displayRH()      //上限显示
+ 135           {
+ 136   1         write_com(0xc0+3);
+ 137   1         write_date(RH/100%10+0x30);//上限百位
+ 138   1         write_date(RH/10%10+0x30);//上限十位
+ 139   1         //write_date('.');
+ 140   1         //write_date(RH%10+0x30);
+ 141   1       }
+ 142          void displayRL()    //下限显示
+ 143           {
+ 144   1         write_com(0xca);
+ 145   1         write_date('R');
+ 146   1         write_date('L');
+ 147   1         write_date(':');
+ 148   1         write_date(RL/100%10+0x30);//下限百位
+ 149   1         write_date(RL/10%10+0x30);//下限十位
+ 150   1         write_date('%');
+ 151   1      }
+ 152          // void displaytime()  //时间显示 
+ 153          //  {
+ 154          //    uchar years=0x23,month=0x03,day=0x18;//时间、日期变量
+ 155          //     years=getds1302(0x8D);
+ 156          //    month=getds1302(0x89);
+ 157          //    day=getds1302(0x87);
+ 158          //    write_com(0x80);
+ 159          //    write_date(years/16+0x30);
+ 160          //    write_date(years%16+0x30);
+ 161          //    write_date('-');
+ 162          //    write_date(month/16+0x30);
+ 163          //    write_date(month%16+0x30);
+ 164          //    write_date('-');
+ 165          //    write_date(day/16+0x30);
+ 166          //    write_date(day%16+0x30);
+ 167          // }
+ 168          void displaytime()   //时间显示 
+ 169           {
+ 170   1          uchar years=0x23,month=0x03,day=0x18;//时间、日期变量
+ 171   1          years=getds1302(0x8D);
+ 172   1          month=getds1302(0x89);
+ 173   1          day=getds1302(0x87);
+ 174   1          write_com(0x80);
+ 175   1          write_date('2');
+ 176   1          write_date('3');
+ 177   1          write_date('-');
+ 178   1          write_date('0');
+ 179   1          write_date('5');
+C51 COMPILER V9.05   MAIN                                                                  05/02/2023 13:05:49 PAGE 4   
+
+ 180   1          write_date('-');
+ 181   1          write_date('1');
+ 182   1          write_date('5');
+ 183   1      }
+ 184          /**************************************************/
+ 185          /*******************按键处理***********************/
+ 186          void keyscan()     
+ 187          {bit kk1=0,kk2=0;
+ 188   1       if(key1==0)
+ 189   1       {delay(30);
+ 190   2        while(key1==0);
+ 191   2        if(key>=2)
+ 192   2        {key=0;}
+ 193   2        else
+ 194   2        {key++;}
+ 195   2        switch(key)
+ 196   2        {case 1:{write_com(0x0f);write_com(0xce); //光标闪烁
+ 197   4         while(key1!=0) //等待按键松开
+ 198   4        {if(key2==0)    //key2按键下
+ 199   5         {delay(30);    //按键延时消抖
+ 200   6          if(key2==0)   //确定key2按下
+ 201   6          {while(key2==0); //等待松开
+ 202   7           if(RL>=998)
+ 203   7           {RL=999;}    //RL下限最大设置为99
+ 204   7           else
+ 205   7           {RL+=10;}    //RL加1
+ 206   7          }
+ 207   6          displayRL();    //调用RL下限显示函数
+ 208   6          write_com(0xce);
+ 209   6         }   
+ 210   5         if(key3==0)    //key3按下
+ 211   5         {delay(30);    //按键延时消抖
+ 212   6          if(key3==0)   //确定key3按下
+ 213   6          {while(key3==0);   //等待key3按键松开
+ 214   7           if(RL<=1)         //RL最小设置为1
+ 215   7           {RL=0;}
+ 216   7           else
+ 217   7           {RL-=10;}      //RL下限减1
+ 218   7          }
+ 219   6          displayRL();    //调用RL下限显示函数
+ 220   6          write_com(0xce);
+ 221   6         }
+ 222   5        }while(key1==0);  
+ 223   4      }
+ 224   3        case 2:
+ 225   3        {write_com(0x0f);write_com(0xc4);  //RH设置数据，光标闪烁
+ 226   4         while(key1==1)
+ 227   4         {if(key2==0)      //key2按下
+ 228   5          {delay(30);      //按键延时消抖
+ 229   6           if(key2==0)     //确定key2按下
+ 230   6           {while(key2==0);//等待松开
+ 231   7            if(RH>=998)    //RH最大设置为99
+ 232   7            {RH=999;}
+ 233   7            else
+ 234   7            {RH+=10;}   //RH加1
+ 235   7           }
+ 236   6           displayRH(); //RH上限显示函数
+ 237   6           write_com(0xc4);
+ 238   6          } 
+ 239   5         if(key3==0)    //key3按下
+ 240   5         {delay(30);    //按键延时消抖
+ 241   6          if(key3==0)   //确定按下
+C51 COMPILER V9.05   MAIN                                                                  05/02/2023 13:05:49 PAGE 5   
+
+ 242   6          {while(key3==0);//等待松开
+ 243   7           if(RH<=1)      //RH最小设置为1
+ 244   7           {RH=0;}
+ 245   7           else
+ 246   7           {RH-=10;}    //RH减1
+ 247   7          }
+ 248   6          displayRH();    //调用RH显示函数
+ 249   6          write_com(0xc4);
+ 250   6         }
+ 251   5        }
+ 252   4        while(key1==0);
+ 253   4       }
+ 254   3        case 0:
+ 255   3        {write_com(0x0c);
+ 256   4         motor=kk2;
+ 257   4         break;}
+ 258   3        }
+ 259   2       }
+ 260   1      }
+ 261          /*****************土壤检测数据转换********************/
+ 262          void Conut(void)  
+ 263          {   
+ 264   1          v=Adc0832();
+ 265   1          temp=v;
+ 266   1          temp_f=temp*9.90/2.55;
+ 267   1          temp=temp_f;
+ 268   1          temp=1000-temp;  
+ 269   1          write_com(0x80+11);
+ 270   1          write_date(temp/100%10+0x30);//千位
+ 271   1          write_date(temp/10%10+0x30);//百位
+ 272   1          write_date('.');
+ 273   1          write_date(temp%10+0x30);
+ 274   1          write_date('%');//显示符号位
+ 275   1      }
+ 276          /********************************************************/
+ 277          void main(void)
+ 278          {
+ 279   1        lcdinit();
+ 280   1        init();
+ 281   1        displaytime();
+ 282   1        displayRH();   //显示上限
+ 283   1        displayRL();   //显示下限
+ 284   1        delay(200);    //启动等待，等LCD讲入工作状态
+ 285   1        Conut();       //显示函数
+ 286   1        delay(150);   
+ 287   1        while(1)
+ 288   1        {   
+ 289   2           Conut(); //显示当前湿度
+ 290   2           keyscan();
+ 291   2           if(temp>RH)  //如果湿度大于上限停止浇水
+ 292   2           {motor=1;    //关闭继电器
+ 293   3           }
+ 294   2           else if(temp<RL)//如果湿度小于RL下限启动浇水
+ 295   2           {motor=0;       //启动继电器
+ 296   3           }
+ 297   2           if(temp<RL)    //小于下限启动报警并浇水
+ 298   2           {speak=0;      //启动报警
+ 299   3            delay(150);   //延时
+ 300   3            speak=1;
+ 301   3           }
+ 302   2           keyscan();    //按键检测
+ 303   2           delay(150);   //延时50MS 
+C51 COMPILER V9.05   MAIN                                                                  05/02/2023 13:05:49 PAGE 6   
+
+ 304   2        } 
+ 305   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1103    ----
+   CONSTANT SIZE    =     43    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     17    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      1       2
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
